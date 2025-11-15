@@ -9,12 +9,22 @@
 name: Packages-AutoBuild
 
 on: 
-  repository_dispatch:
-  # push: 
-  #   branches:
-  #     - master
-  # schedule:
-  #   - cron: 0 1 */1 * *
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '选择目标设备'
+        required: true
+        default: 'x86_64'
+        type: choice
+        options:
+        - x86_64
+        - nanopi-r2s
+        - redmi-ac2100
+      ssh:
+        description: '是否启用SSH调试'
+        required: false
+        default: false
+        type: boolean
 
 env:
   REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
@@ -25,11 +35,11 @@ jobs:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-latest
     
-    name: Build ${{matrix.target}}
+    name: Build ${{github.event.inputs.target}}
     strategy:
       fail-fast: false
       matrix:
-        target: ["${{ github.event.client_payload.target }}"]
+        target: ["${{ github.event.inputs.target }}"]
         
     steps:
     - name: Checkout
@@ -58,9 +68,9 @@ jobs:
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean ) &
         sudo timedatectl set-timezone "$TZ"
-        if [ ${{matrix.target}} == "redmi-ac2100" ]; then
+        if [ ${{github.event.inputs.target}} == "redmi-ac2100" ]; then
             echo "MTARGET=mipsel_24kc" >> $GITHUB_ENV
-        elif [ ${{matrix.target}} == "x86_64" ]; then
+        elif [ ${{github.event.inputs.target}} == "x86_64" ]; then
             echo "MTARGET=x86_64" >> $GITHUB_ENV
         else
             echo "MTARGET=aarch64_generic" >> $GITHUB_ENV
@@ -75,9 +85,9 @@ jobs:
 
     - name: Clone source code
       run: |
-        if [ ${{matrix.target}} == "redmi-ac2100" ]; then
+        if [ ${{github.event.inputs.target}} == "redmi-ac2100" ]; then
             wget -cO sdk.tar.xz https://downloads.openwrt.org/releases/21.02-SNAPSHOT/targets/ramips/mt7621/openwrt-sdk-21.02-SNAPSHOT-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz
-        elif [ ${{matrix.target}} == "x86_64" ]; then
+        elif [ ${{github.event.inputs.target}} == "x86_64" ]; then
             wget -cO sdk.tar.xz https://downloads.openwrt.org/releases/21.02-SNAPSHOT/targets/x86/64/openwrt-sdk-21.02-SNAPSHOT-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz
         else
             wget -cO sdk.tar.xz https://downloads.openwrt.org/releases/21.02-SNAPSHOT/targets/rockchip/armv8/openwrt-sdk-21.02-SNAPSHOT-rockchip-armv8_gcc-8.4.0_musl.Linux-x86_64.tar.xz
@@ -100,22 +110,22 @@ jobs:
         fi
         ln -sf /usr/bin/python3 staging_dir/host/bin/python3
         cp -rf devices/common/. ./
-        cp -rf devices/${{matrix.target}}/. ./
+        cp -rf devices/${{github.event.inputs.target}}/. ./
         ./scripts/feeds update -a
 
     - name: Load custom configuration
       run: |
         cd openwrt
         chmod +x devices/common/* || true
-        chmod +x devices/${{matrix.target}}/* || true
+        chmod +x devices/${{github.event.inputs.target}}/* || true
         cp -f devices/common/.config .config
         /bin/bash "devices/common/custom.sh"
-        if [ -f "devices/${{matrix.target}}/custom.sh" ]; then
-          /bin/bash "devices/${{matrix.target}}/custom.sh"
+        if [ -f "devices/${{github.event.inputs.target}}/custom.sh" ]; then
+          /bin/bash "devices/${{github.event.inputs.target}}/custom.sh"
         fi
-        if [ -f "devices/${{matrix.target}}/.config" ]; then
+        if [ -f "devices/${{github.event.inputs.target}}/.config" ]; then
           echo >> .config
-          cat devices/${{matrix.target}}/.config >> .config
+          cat devices/${{github.event.inputs.target}}/.config >> .config
         fi
         cp -Rf ./diy/* ./ || true
 
@@ -123,13 +133,13 @@ jobs:
       run: |
         cd openwrt
         find "devices/common/patches" -type f ! -path 'devices/common/patches/china_mirrors.patch' -name '*.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%'  | patch -d './' -p1 -E --forward --no-backup-if-mismatch" || true
-        if [ -n "$(ls -A "devices/${{matrix.target}}/patches" 2>/dev/null)" ]; then
-          find "devices/${{matrix.target}}/patches" -type f -name '*.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%'  | patch -d './' -p1 -E --forward --no-backup-if-mismatch" || true
+        if [ -n "$(ls -A "devices/${{github.event.inputs.target}}/patches" 2>/dev/null)" ]; then
+          find "devices/${{github.event.inputs.target}}/patches" -type f -name '*.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%'  | patch -d './' -p1 -E --forward --no-backup-if-mismatch" || true
         fi
 
     - name: SSH connection to Actions
       uses: garypang13/debugger-action@master
-      if: contains(github.event.action, 'ssh')
+      if: github.event.inputs.ssh == 'true'
 
     - name: Compile single package
       run: |
